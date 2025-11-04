@@ -1,0 +1,165 @@
+# =============================================================================
+# TECHNO ANALYTICS - FLUTTER APP GITIGNORE
+# =============================================================================
+
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# =============================================================================
+# ENVIRONMENT & SECRETS
+# =============================================================================
+
+# Environment variables
+.env
+.env.local
+.env.production
+.env.development
+*.env
+
+# API Keys y configuración sensible
+api.json
+cors-config.json
+**/secrets/
+**/keys/
+
+# Archivos de configuración local
+local.properties
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# =============================================================================
+# DATA & UPLOADS
+# =============================================================================
+
+# Archivos de datos grandes
+*.tif
+*.tiff
+*.cog
+*.geotiff
+
+# Directorios de datos
+rasters_to_migrate/
+temp/
+uploads/
+downloads/
+test_files/
+
+# Archivos temporales de procesamiento
+temp_*
+*_temp.*
+processing_*
+
+# =============================================================================
+# PYTHON RELATED (Para scripts de ingesta)
+# =============================================================================
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Python packages
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Python virtual environments
+.python-version
+
+# =============================================================================
+# CLOUD & DEPLOYMENT
+# =============================================================================
+
+# Google Cloud
+gcp-key.json
+service-account.json
+*.json.key
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+
+# =============================================================================
+# BACKUP & TEMP FILES
+# =============================================================================
+
+# Backup files
+*.backup
+*.bak
+*.old
+*_backup.*
+backup_*
+
+# Temporary files
+*.tmp
+*.temp
+*_tmp.*
+*_temp.*
+
+# Archives
+*.zip
+*.tar.gz
+*.rar
+*.7z
