@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:techno_analytics/constants.dart';
 import '../services/supabase_service.dart';
 import '../widgets/weather_widget.dart';
@@ -141,6 +142,7 @@ class _ExplorarViewState extends State<ExplorarView> {
 
   // Variables para parcelas
   List<Map<String, dynamic>> _parcelas = [];
+  List<Polygon> _parcelasPoligonos = []; // CACHE de polígonos
   bool _mostrarParcelas = true;
   bool _loadingParcelas = false;
   bool _isMapReady = false;
@@ -150,84 +152,211 @@ class _ExplorarViewState extends State<ExplorarView> {
     super.initState();
     _mapController = MapController();
     modoVerInspecciones = false; 
-    _inicializarFiltros();
-    if (widget.modoInspeccionInicial) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
+    
+    // Establecer coordenadas por defecto inmediatamente
+    _initialCenter = const LatLng(15.083297525301454, -92.62443554604393);
+    
+    // Inicializar filtros de forma asíncrona
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _inicializarFiltros();
+      
+      if (widget.modoInspeccionInicial) {
         setState(() {
           modoInspeccion = true;
-          // Usar el centro actual del mapa o coordenadas por defecto
-          puntoInspeccion = _initialCenter ?? const LatLng(15.083297525301454, -92.62443554604393);
+          puntoInspeccion = _initialCenter;
         });
-      });
-    }
+      }
+    });
   }
 
   Future<void> _inicializarFiltros() async {
+    if (!mounted) return;
+    
     try {
-      final email = Supabase.instance.client.auth.currentUser?.email;
-      if (email == null) return;
+      print('🔄 Inicializando filtros...');
+      
+      // Verificar autenticación usando SharedPreferences
+      final prefs = await SharedPreferences.getInstance();
+      final isLoggedIn = prefs.getBool('is_logged_in') ?? false;
+      final email = prefs.getString('user_email') ?? '';
+      
+      if (!isLoggedIn || email.isEmpty) {
+        print('❌ Usuario no autenticado');
+        if (mounted) {
+          Navigator.of(context).pushReplacementNamed('/');
+        }
+        return;
+      }
 
-      final userInfo = await supabaseService.getUserInfo(email);
-      if (userInfo == null) return;
+      print('✅ Usuario autenticado: $email');
 
-      selectedEmpresa = userInfo['company'];
-      final userIngenio = userInfo['ingenio'];
+      // Obtener información del usuario desde SharedPreferences
+      selectedEmpresa = prefs.getString('user_company') ?? '';
+      final userIngenio = prefs.getString('user_ingenio') ?? '';
+      selectedCountry = (prefs.getString('user_country') ?? '').toLowerCase();
 
+      print('✅ Información de usuario obtenida: $selectedEmpresa');
+
+      if (selectedEmpresa.isEmpty) {
+        print('❌ Empresa vacía');
+        _usarValoresPorDefecto();
+        return;
+      }
+
+      // Actualizar UI inmediatamente con datos básicos
+      if (mounted) {
+        setState(() {});
+      }
+
+      // Ejecutar operaciones pesadas en background
+      _cargarDatosEnBackground(userIngenio);
+
+      // Cargar coordenadas del ingenio (no crítico para la UI)
+      _loadIngenioCoordinates().then((_) {
+        if (_ingenioCoordinates != null && mounted) {
+          final newCenter = LatLng(
+            _ingenioCoordinates!['latitude']! as double,
+            _ingenioCoordinates!['longitude']! as double,
+          );
+          
+          // Solo actualizar si las coordenadas son diferentes
+          if (_initialCenter != newCenter) {
+            setState(() {
+              _initialCenter = newCenter;
+            });
+            print('✅ Coordenadas actualizadas para $selectedIngenio: $newCenter');
+          }
+        }
+      }).catchError((e) {
+        print('⚠️ Error cargando coordenadas del ingenio: $e');
+      });
+
+      // Actualizar UI
+      if (mounted) {
+        setState(() {});
+        print('✅ Inicialización completada');
+      }
+
+    } catch (e) {
+      print('❌ Error crítico en _inicializarFiltros: $e');
+      _usarValoresPorDefecto();
+    }
+  }
+
+  void _usarValoresPorDefecto() {
+    print('🔧 Usando valores por defecto');
+    selectedEmpresa = '';
+    selectedIngenio = '';
+    selectedCountry = '';
+    selectedFecha = '';
+    selectedProducto = '';
+    ingeniosDisponibles = [];
+    fechasDisponibles = [];
+    productosDisponibles = [];
+    _initialCenter = const LatLng(15.083297525301454, -92.62443554604393);
+    
+    if (mounted) {
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Error al cargar datos. Usando vista básica.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+    }
+  }
+
+  // Método para cargar datos pesados en background sin bloquear la UI
+  Future<void> _cargarDatosEnBackground(String userIngenio) async {
+    try {
+      // Obtener ingenios
       if (userIngenio == 'Todos') {
-        ingeniosDisponibles = await supabaseService.getIngeniosByCompany(selectedEmpresa);
+        ingeniosDisponibles = await Future.any([
+          supabaseService.getIngeniosByCompany(selectedEmpresa),
+          Future.delayed(const Duration(seconds: 5), () => <String>[]),
+        ]);
       } else {
         ingeniosDisponibles = [userIngenio];
       }
 
-      // Seleccionar el primer ingenio que no sea "Todos"
+      // Seleccionar ingenio válido
       selectedIngenio = ingeniosDisponibles.firstWhere(
-        (ingenio) => ingenio != 'Todos', 
+        (ingenio) => ingenio != 'Todos' && ingenio.isNotEmpty, 
         orElse: () => ingeniosDisponibles.isNotEmpty ? ingeniosDisponibles.first : ''
       );
-      selectedCountry = userInfo['country'].toString().toLowerCase();
 
-      fechasDisponibles = await supabaseService.getFechasDisponibles(selectedEmpresa, selectedIngenio);
+      if (selectedIngenio.isEmpty) {
+        print('❌ No hay ingenios disponibles');
+        return;
+      }
+
+      print('✅ Ingenio seleccionado: $selectedIngenio');
+
+      // Actualizar UI con ingenio
+      if (mounted) {
+        setState(() {});
+      }
+
+      // Obtener fechas con timeout reducido
+      fechasDisponibles = await Future.any([
+        supabaseService.getFechasDisponibles(selectedEmpresa, selectedIngenio),
+        Future.delayed(const Duration(seconds: 3), () => <String>[]),
+      ]);
 
       if (fechasDisponibles.isNotEmpty) {
         selectedFecha = fechasDisponibles.last;
+        print('✅ Fecha seleccionada: $selectedFecha');
 
-        productosDisponibles = await supabaseService.getProductosPorFecha(
-          selectedEmpresa, selectedIngenio, selectedFecha,
-        );
+        // Obtener productos con timeout reducido
+        try {
+          productosDisponibles = await Future.any([
+            supabaseService.getProductosPorFecha(selectedEmpresa, selectedIngenio, selectedFecha),
+            Future.delayed(const Duration(seconds: 3), () => <String>[]),
+          ]);
 
-        selectedProducto = productosDisponibles.isNotEmpty ? productosDisponibles.first : '';
+          selectedProducto = productosDisponibles.isNotEmpty ? productosDisponibles.first : '';
+          print('✅ Producto seleccionado: $selectedProducto (${productosDisponibles.length} disponibles)');
+        } catch (e) {
+          print('❌ Error obteniendo productos: $e');
+          productosDisponibles = [];
+          selectedProducto = '';
+        }
       } else {
         selectedFecha = '';
         productosDisponibles = [];
         selectedProducto = '';
+        print('⚠️ No hay fechas disponibles para $selectedEmpresa - $selectedIngenio');
       }
 
-      // Cargar coordenadas del clima para el ingenio inicial
-      await _loadIngenioCoordinates();
-      
-      // Establecer coordenadas iniciales basadas en el ingenio seleccionado
-      if (_ingenioCoordinates != null) {
-        _initialCenter = LatLng(
-          _ingenioCoordinates!['latitude']! as double,
-          _ingenioCoordinates!['longitude']! as double,
-        );
-        print('INFO Coordenadas iniciales establecidas para $selectedIngenio: $_initialCenter');
-      } else {
-        // Fallback a coordenadas de Huixtla si no se pueden obtener las coordenadas del ingenio
-        _initialCenter = const LatLng(15.083297525301454, -92.62443554604393);
-        print('WARNING Usando coordenadas por defecto de Huixtla');
-      }
-
-      setState(() {});
-    } catch (e) {
-      print('ERROR Error en _inicializarFiltros: $e');
-      // En caso de error, usar coordenadas por defecto
-      _initialCenter = const LatLng(15.083297525301454, -92.62443554604393);
+      // Actualizar UI final
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Error al cargar filtros. Verifica conexión o datos.')),
-        );
+        setState(() {});
       }
+
+      // Cargar coordenadas del ingenio en background (no crítico para la UI)
+      _loadIngenioCoordinates().then((_) {
+        if (_ingenioCoordinates != null && mounted) {
+          final newCenter = LatLng(
+            _ingenioCoordinates!['latitude']! as double,
+            _ingenioCoordinates!['longitude']! as double,
+          );
+          
+          // Solo actualizar si las coordenadas son diferentes
+          if (_initialCenter != newCenter) {
+            setState(() {
+              _initialCenter = newCenter;
+            });
+            print('✅ Coordenadas actualizadas para $selectedIngenio: $newCenter');
+          }
+        }
+      }).catchError((e) {
+        print('⚠️ Error cargando coordenadas del ingenio: $e');
+      });
+
+      print('✅ Carga en background completada');
+
+    } catch (e) {
+      print('❌ Error crítico en _cargarDatosEnBackground: $e');
     }
   }
 
@@ -603,20 +732,38 @@ class _ExplorarViewState extends State<ExplorarView> {
 
   // Función para cargar parcelas del ingenio seleccionado SIN auto-centrado
   Future<void> _cargarParcelasSinCentrar() async {
+    // Hacer una pausa pequeña para no bloquear la UI
+    await Future.delayed(const Duration(milliseconds: 100));
+    
     if (selectedEmpresa.isEmpty || selectedIngenio.isEmpty || !mounted) {
       print('WARNING No se pueden cargar parcelas: empresa o ingenio no seleccionados');
+      if (mounted) {
+        setState(() {
+          _parcelas = [];
+          _loadingParcelas = false;
+        });
+      }
       return;
     }
     
-    setState(() => _loadingParcelas = true);
+    if (mounted) {
+      setState(() => _loadingParcelas = true);
+    }
     
     try {
-      final parcelas = await supabaseService.getParcelasActivas(selectedEmpresa, selectedIngenio);
-      setState(() {
-        _parcelas = parcelas;
-        _loadingParcelas = false;
-      });
-      print('SUCCESS Cargadas ${parcelas.length} parcelas para $selectedIngenio (sin auto-centrado)');
+      // Cargar parcelas con timeout más corto para evitar bloqueo
+      final parcelas = await Future.any([
+        supabaseService.getParcelasActivas(selectedEmpresa, selectedIngenio),
+        Future.delayed(const Duration(seconds: 5), () => <Map<String, dynamic>>[]),
+      ]);
+      
+      if (mounted) {
+        setState(() {
+          _parcelas = parcelas;
+          _loadingParcelas = false;
+        });
+        print('SUCCESS Cargadas ${parcelas.length} parcelas para $selectedIngenio (sin auto-centrado)');
+      }
     } catch (e) {
       print('ERROR Error cargando parcelas: $e');
       if (mounted) {
@@ -639,11 +786,16 @@ class _ExplorarViewState extends State<ExplorarView> {
     
     try {
       final parcelas = await supabaseService.getParcelasActivas(selectedEmpresa, selectedIngenio);
+      
+      // Convertir a polígonos UNA SOLA VEZ
+      final poligonos = _convertirParcelasAPoligonos(parcelas);
+      
       setState(() {
         _parcelas = parcelas;
+        _parcelasPoligonos = poligonos;
         _loadingParcelas = false;
       });
-      print('SUCCESS Cargadas ${parcelas.length} parcelas para $selectedIngenio');
+      print('SUCCESS Cargadas ${parcelas.length} parcelas y ${poligonos.length} polígonos para $selectedIngenio');
       
       // Centrar y hacer zoom en las parcelas del ingenio solo si hay parcelas válidas
       if (parcelas.isNotEmpty && mounted) {
@@ -659,6 +811,7 @@ class _ExplorarViewState extends State<ExplorarView> {
       if (mounted) {
         setState(() {
           _parcelas = [];
+          _parcelasPoligonos = [];
           _loadingParcelas = false;
         });
       }
@@ -667,13 +820,19 @@ class _ExplorarViewState extends State<ExplorarView> {
 
   // Función para centrar el mapa usando centroides de la base de datos
   void _centrarEnParcelas(List<Map<String, dynamic>> parcelas) async {
-    if (!mounted) return;
+    if (!mounted || parcelas.isEmpty) {
+      print('⚠️ No se puede centrar: sin parcelas o widget no montado');
+      return;
+    }
 
     try {
       // Usar el centroide calculado desde la base de datos para mayor eficiencia
       print('🎯 Centrando mapa usando centroide de vw_centroide_global...');
       
-      final coordenadas = await supabaseService.getIngenioCoordinates(selectedIngenio);
+      final coordenadas = await Future.any([
+        supabaseService.getIngenioCoordinates(selectedIngenio),
+        Future.delayed(const Duration(seconds: 5), () => null),
+      ]);
       
       if (coordenadas != null && mounted) {
         final latitude = coordenadas['latitude']! as double;
@@ -841,20 +1000,33 @@ class _ExplorarViewState extends State<ExplorarView> {
   }
 
   // Función para convertir GeoJSON de Supabase a polígonos de Flutter Map
-  List<Polygon> _convertirParcelasAPoligonos() {
-    List<Polygon> poligonos = [];
+  List<Polygon> _convertirParcelasAPoligonos([List<Map<String, dynamic>>? parcelas]) {
+    final parcelasAConvertir = parcelas ?? _parcelas;
+    if (parcelasAConvertir.isEmpty) {
+      return [];
+    }
     
-    for (var parcela in _parcelas) {
+    List<Polygon> poligonos = [];
+    int parcelasExitosas = 0;
+    int parcelasConError = 0;
+    
+    // Procesar TODAS las parcelas sin límite
+    print('>>> Convirtiendo ${parcelasAConvertir.length} parcelas a polígonos...');
+    
+    for (var parcela in parcelasAConvertir) {
       try {
         final geometryJson = parcela['geometry_polygon'];
         if (geometryJson == null) continue;
         
-        // Parsear el GeoJSON
+        // Parsear el GeoJSON de forma segura
         Map<String, dynamic> geometry;
         if (geometryJson is String) {
+          if (geometryJson.trim().isEmpty) continue;
           geometry = jsonDecode(geometryJson);
-        } else {
+        } else if (geometryJson is Map<String, dynamic>) {
           geometry = geometryJson;
+        } else {
+          continue;
         }
         
         if (geometry['type'] == 'Polygon' && geometry['coordinates'] != null) {
@@ -865,33 +1037,52 @@ class _ExplorarViewState extends State<ExplorarView> {
             final exteriorRing = coordinates[0] as List;
             List<LatLng> puntos = [];
             
-            for (var coord in exteriorRing) {
+            // Limitar también el número de puntos por polígono
+            final puntosLimitados = exteriorRing.take(100).toList(); // Máximo 100 puntos por polígono
+            
+            for (var coord in puntosLimitados) {
               if (coord is List && coord.length >= 2) {
-                // GeoJSON usa [longitud, latitud]
-                double lng = (coord[0] as num).toDouble();
-                double lat = (coord[1] as num).toDouble();
-                puntos.add(LatLng(lat, lng));
+                try {
+                  // GeoJSON usa [longitud, latitud]
+                  double lng = (coord[0] as num).toDouble();
+                  double lat = (coord[1] as num).toDouble();
+                  
+                  // Validar coordenadas razonables
+                  if (lat.abs() <= 90 && lng.abs() <= 180) {
+                    puntos.add(LatLng(lat, lng));
+                  }
+                } catch (e) {
+                  // Saltar coordenada inválida
+                  continue;
+                }
               }
             }
             
-            if (puntos.isNotEmpty) {
+            // Solo crear polígono si tenemos al menos 3 puntos válidos
+            if (puntos.length >= 3) {
               poligonos.add(
                 Polygon(
                   points: puntos,
                   color: Colors.transparent, // Sin relleno
-                  borderColor: Colors.grey[400]!, // Gris claro
-                  borderStrokeWidth: 1.0, // Línea más delgada
-                  isFilled: false, // Sin relleno
+                  borderColor: Colors.blue.withOpacity(0.7), // Azul semi-transparente
+                  borderStrokeWidth: 1.0, // Línea delgada
+                  isFilled: false,
                 ),
               );
+              parcelasExitosas++;
             }
           }
         }
       } catch (e) {
-        print('ERROR Error procesando parcela ${parcela['id']}: $e');
+        parcelasConError++;
+        // Solo mostrar los primeros errores para no saturar logs
+        if (parcelasConError <= 5) {
+          print('ERROR Error procesando parcela ${parcela['id'] ?? 'unknown'}: $e');
+        }
       }
     }
     
+    print('>>> Poligonos creados: $parcelasExitosas exitosos, $parcelasConError errores de ${parcelasAConvertir.length} parcelas');
     return poligonos;
   }
 
@@ -1297,8 +1488,33 @@ class _ExplorarViewState extends State<ExplorarView> {
 
   @override
   Widget build(BuildContext context) {
-    if (selectedEmpresa.isEmpty || selectedIngenio.isEmpty || selectedCountry.isEmpty || _initialCenter == null) {
-      return const Center(child: CircularProgressIndicator()); // 🛑 Previene acceso prematuro y espera coordenadas
+    // Solo mostrar loading si realmente no tenemos coordenadas iniciales
+    if (_initialCenter == null) {
+      return Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const CircularProgressIndicator(
+                color: Color(0xFF52AA5E),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Cargando mapa...',
+                style: TextStyle(
+                  color: Colors.grey[600],
+                  fontSize: 16,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Si no hay datos de empresa/ingenio, mostrar el mapa básico
+    if (selectedEmpresa.isEmpty || selectedIngenio.isEmpty) {
+      print('⚠️ Mostrando mapa básico - Empresa: $selectedEmpresa, Ingenio: $selectedIngenio');
     }
 
     return Scaffold(
@@ -1310,20 +1526,32 @@ class _ExplorarViewState extends State<ExplorarView> {
               initialCenter: _initialCenter!,
               initialZoom: initialZoom,
               onMapReady: () {
-                // Marcar el mapa como listo
-                setState(() {
-                  _isMapReady = true;
-                });
-                // Cargar parcelas cuando el mapa esté listo (pero sin centrar automáticamente)
-                print('INFO Mapa listo, cargando parcelas sin auto-centrado...');
-                _cargarParcelasSinCentrar();
+                try {
+                  // Marcar el mapa como listo
+                  setState(() {
+                    _isMapReady = true;
+                  });
+                  // Cargar parcelas cuando el mapa esté listo (pero sin centrar automáticamente)
+                  print('INFO Mapa listo, cargando parcelas sin auto-centrado...');
+                  _cargarParcelasSinCentrar().catchError((e) {
+                    print('ERROR en _cargarParcelasSinCentrar desde onMapReady: $e');
+                  });
+                } catch (e) {
+                  print('ERROR crítico en onMapReady: $e');
+                }
               },
               onPositionChanged: (pos, hasGesture) {
-                if (modoInspeccion) {
-                  setState(() => puntoInspeccion = pos.center);
+                try {
+                  if (modoInspeccion) {
+                    setState(() => puntoInspeccion = pos.center);
+                  }
+                  // Actualizar la UI cuando cambie el zoom para mostrar/ocultar parcelas
+                  if (mounted) {
+                    setState(() {});
+                  }
+                } catch (e) {
+                  print('ERROR en onPositionChanged: $e');
                 }
-                // Actualizar la UI cuando cambie el zoom para mostrar/ocultar parcelas
-                setState(() {});
               },
             ),
             children: [
@@ -1336,10 +1564,15 @@ class _ExplorarViewState extends State<ExplorarView> {
                   silenceExceptions: true, // Silenciar errores 404 de tiles base
                 ),
               ),
-              if (selectedEmpresa.isNotEmpty && selectedIngenio.isNotEmpty && !modoComparacion)
+              if (selectedEmpresa.isNotEmpty && selectedIngenio.isNotEmpty && selectedProducto.isNotEmpty && selectedFecha.isNotEmpty && !modoComparacion)
                 FutureBuilder<Map<String, dynamic>?>(
                   future: supabaseService.getProductoInfo(selectedEmpresa, selectedIngenio, selectedProducto, selectedFecha),
                   builder: (context, snapshot) {
+                    // Manejo de errores silencioso
+                    if (snapshot.hasError) {
+                      print('⚠️ Error cargando producto info: ${snapshot.error}');
+                      return Container(); // No mostrar capa si hay error
+                    }
                     if (snapshot.hasData && snapshot.data != null) {
                       final producto = snapshot.data!;
                       final cogUrl = producto['cog_url'] as String?;
@@ -1473,11 +1706,9 @@ class _ExplorarViewState extends State<ExplorarView> {
                 ),
               ],
 
-              // Capa de polígonos de parcelas (visible desde zoom más bajo)
-              if (_mostrarParcelas && _parcelas.isNotEmpty && _mapController.camera.zoom >= 10.0)
-                PolygonLayer(
-                  polygons: _convertirParcelasAPoligonos(),
-                ),
+              // Capa de polígonos de parcelas (visible con zoom >= 10)
+              if (_mostrarParcelas && _parcelasPoligonos.isNotEmpty && _isMapReady && _mapController.camera.zoom >= 10.0)
+                PolygonLayer(polygons: _parcelasPoligonos),
 
               if (_marcadoresInspecciones.isNotEmpty)
                 MarkerClusterLayerWidget(
@@ -1659,7 +1890,7 @@ class _ExplorarViewState extends State<ExplorarView> {
                       Icons.crop_free, 
                       color: _loadingParcelas 
                         ? Colors.orange 
-                        : (_isMapReady && _mapController.camera.zoom < 10.0)
+                        : (_isMapReady && _mapController.camera.zoom < 12.0)
                           ? Colors.grey
                           : Colors.green,
                       size: 16,
@@ -1668,8 +1899,8 @@ class _ExplorarViewState extends State<ExplorarView> {
                     Text(
                       _loadingParcelas 
                         ? 'Cargando...' 
-                        : (_isMapReady && _mapController.camera.zoom < 10.0)
-                          ? '${_parcelas.length} parcelas (zoom para ver)'
+                        : (_isMapReady && _mapController.camera.zoom < 12.0)
+                          ? '${_parcelas.length} parcelas (zoom >12 para ver)'
                           : '${_parcelas.length} parcelas',
                       style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
                     ),
@@ -1787,56 +2018,88 @@ class _ExplorarViewState extends State<ExplorarView> {
                   // Fecha con ícono y calendario
                   GestureDetector(
                     onTap: () async {
-                      if (fechasDisponibles.isEmpty) return;
+                      if (fechasDisponibles.isEmpty || selectedEmpresa.isEmpty || selectedIngenio.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('No hay fechas disponibles')),
+                        );
+                        return;
+                      }
 
-                      DateTime? picked = await showDatePicker(
-                        context: context,
-                        initialDate: DateTime.parse(fechasDisponibles.last),
-                        firstDate: DateTime.parse(fechasDisponibles.first),
-                        lastDate: DateTime.parse(fechasDisponibles.last),
-                        selectableDayPredicate: (day) {
-                          final formatted = DateFormat('yyyy-MM-dd').format(day);
-                          return fechasDisponibles.contains(formatted);
-                        },
-                      );
+                      try {
+                        DateTime? picked = await showDatePicker(
+                          context: context,
+                          initialDate: DateTime.parse(fechasDisponibles.last),
+                          firstDate: DateTime.parse(fechasDisponibles.first),
+                          lastDate: DateTime.parse(fechasDisponibles.last),
+                          selectableDayPredicate: (day) {
+                            final formatted = DateFormat('yyyy-MM-dd').format(day);
+                            return fechasDisponibles.contains(formatted);
+                          },
+                        );
 
-                      if (picked != null) {
-                        final formatted = DateFormat('yyyy-MM-dd').format(picked);
-                        selectedFecha = formatted;
-                        productosDisponibles = await supabaseService.getProductosPorFecha(
-                          selectedEmpresa, selectedIngenio, selectedFecha);
-                        selectedProducto = productosDisponibles.isNotEmpty ? productosDisponibles.first : '';
-                        setState(() {});
+                        if (picked != null) {
+                          final formatted = DateFormat('yyyy-MM-dd').format(picked);
+                          selectedFecha = formatted;
+                          productosDisponibles = await supabaseService.getProductosPorFecha(
+                            selectedEmpresa, selectedIngenio, selectedFecha);
+                          selectedProducto = productosDisponibles.isNotEmpty ? productosDisponibles.first : '';
+                          setState(() {});
+                        }
+                      } catch (e) {
+                        print('Error seleccionando fecha: $e');
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Error seleccionando fecha')),
+                        );
                       }
                     },
                     child: Row(
                       children: [
-                        const Icon(Icons.calendar_today, size: 20),
+                        Icon(
+                          Icons.calendar_today, 
+                          size: 20,
+                          color: fechasDisponibles.isEmpty ? Colors.grey : null,
+                        ),
                         const SizedBox(width: 6),
                         Text(
                           selectedFecha.isEmpty
-                              ? 'Fecha'
+                              ? (fechasDisponibles.isEmpty ? 'Sin fechas' : 'Fecha')
                               : DateFormat('dd/MM/yyyy').format(DateTime.parse(selectedFecha)),
-                          style: const TextStyle(fontSize: 14),
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: fechasDisponibles.isEmpty ? Colors.grey : null,
+                          ),
                         ),
                       ],
                     ),
                   ),
 
+                  const SizedBox(width: 8),
+
                   // Dropdown de productos
                   Row(
                     children: [
-                      const Icon(Icons.agriculture_outlined, size: 20),
+                      Icon(
+                        Icons.agriculture_outlined, 
+                        size: 20,
+                        color: productosDisponibles.isEmpty ? Colors.grey : null,
+                      ),
                       const SizedBox(width: 6),
                       DropdownButton<String>(
-                        value: selectedProducto.isNotEmpty ? selectedProducto : null,
-                        hint: const Text('Producto'),
+                        value: (selectedProducto.isNotEmpty && productosDisponibles.contains(selectedProducto)) 
+                            ? selectedProducto 
+                            : null,
+                        hint: Text(
+                          productosDisponibles.isEmpty ? 'Sin productos' : 'Producto',
+                          style: TextStyle(
+                            color: productosDisponibles.isEmpty ? Colors.grey : Colors.black54,
+                          ),
+                        ),
                         underline: const SizedBox(),
                         style: const TextStyle(color: Colors.black),
                         items: productosDisponibles.map((p) {
                           return DropdownMenuItem(value: p, child: Text(p));
                         }).toList(),
-                        onChanged: (p) {
+                        onChanged: productosDisponibles.isEmpty ? null : (p) {
                           if (p != null) {
                             setState(() {
                               selectedProducto = p;
@@ -1847,6 +2110,8 @@ class _ExplorarViewState extends State<ExplorarView> {
                       ),
                     ],
                   ),
+
+                  const SizedBox(width: 8),
 
                   // Widget de clima dinámico
                   _ingenioCoordinates != null 

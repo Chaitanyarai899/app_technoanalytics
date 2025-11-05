@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'navigation_view.dart';
 
 class LoginPage extends StatefulWidget {
@@ -49,8 +50,17 @@ class _LoginPageState extends State<LoginPage> {
         return;
       }
 
-      // Login exitoso
+      // Login exitoso - Guardar sesión
       final nombre = usuario['name'] ?? 'Usuario';
+      
+      // Guardar datos de sesión en SharedPreferences
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('user_email', email);
+      await prefs.setString('user_name', nombre);
+      await prefs.setString('user_company', usuario['company'] ?? '');
+      await prefs.setString('user_ingenio', usuario['ingenio'] ?? '');
+      await prefs.setString('user_country', usuario['country'] ?? '');
+      await prefs.setBool('is_logged_in', true);
       
       print('✅ Login exitoso: $email');
 

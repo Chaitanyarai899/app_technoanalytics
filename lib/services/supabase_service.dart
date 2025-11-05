@@ -264,20 +264,35 @@ class SupabaseService {
   // Obtener parcelas activas para mostrar en el mapa
   Future<List<Map<String, dynamic>>> getParcelasActivas(String empresa, String ingenio) async {
     try {
-      print('🔍 Cargando parcelas para: $empresa - $ingenio');
+      print('Cargando parcelas para: $empresa - $ingenio');
+      print('   Empresa: "$empresa" (len: ${empresa.length}, bytes: ${empresa.codeUnits})');
+      print('   Ingenio: "$ingenio" (len: ${ingenio.length}, bytes: ${ingenio.codeUnits})');
       
-      final response = await Supabase.instance.client
+      // Buscar solo por ingenio (sin filtrar por company, igual que vw_centroide_global)
+      print('>>> Query: parcelas_ingenios WHERE ingenio="$ingenio"');
+      
+      // Consultar TODAS las parcelas del ingenio
+      var response = await Supabase.instance.client
           .from('parcelas_ingenios')
           .select('id, id_parcela, ingenio, company, geometry_polygon, area_calculada')
-          .eq('company', empresa)
           .eq('ingenio', ingenio)
-          .eq('temporada_activa', true)
-          .not('geometry_polygon', 'is', null);
+          .limit(15000); // Aumentar a 15,000
+      
+      print('>>> Query final: ${response.length} parcelas cargadas');
 
-      print('📊 Respuesta parcelas: ${response.length} encontradas');
+      if (response.isNotEmpty) {
+        // Mostrar info de las primeras parcelas
+        print('>>> Muestra de parcelas encontradas:');
+        for (var i = 0; i < (response.length > 3 ? 3 : response.length); i++) {
+          final p = response[i];
+          print('   - Parcela ${i+1}: id=${p['id']}, id_parcela=${p['id_parcela']}, ingenio=${p['ingenio']}, company=${p['company']}');
+        }
+      }
+
+      print('>>> Total parcelas a retornar: ${response.length}');
       return List<Map<String, dynamic>>.from(response);
     } catch (e) {
-      print('❌ Error obteniendo parcelas: $e');
+      print('ERROR obteniendo parcelas: $e');
       return [];
     }
   }

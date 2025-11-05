@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'login_page.dart';
+import 'navigation_view.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -70,24 +72,43 @@ class _SplashScreenState extends State<SplashScreen>
 
   Future<void> _checkAuthenticationStatus() async {
     try {
-      // Como ahora usamos autenticación custom (no Supabase Auth),
-      // siempre redirigimos al login para que el usuario ingrese credenciales
-      // En el futuro se puede implementar SharedPreferences para recordar sesión
+      // Verificar sesión guardada en SharedPreferences
+      final prefs = await SharedPreferences.getInstance();
+      final isLoggedIn = prefs.getBool('is_logged_in') ?? false;
+      final userName = prefs.getString('user_name') ?? '';
       
-      print('🔄 Redirigiendo a login (autenticación custom)');
-      
-      if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          PageRouteBuilder(
-            pageBuilder: (context, animation, secondaryAnimation) =>
-                const LoginPage(),
-            transitionDuration: const Duration(milliseconds: 600),
-            transitionsBuilder: (context, animation, secondaryAnimation, child) {
-              return FadeTransition(opacity: animation, child: child);
-            },
-          ),
-        );
+      if (isLoggedIn && userName.isNotEmpty) {
+        print('✅ Sesión existente encontrada para: $userName');
+        
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            PageRouteBuilder(
+              pageBuilder: (context, animation, secondaryAnimation) =>
+                  MainNavigationView(nombre: userName),
+              transitionDuration: const Duration(milliseconds: 600),
+              transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                return FadeTransition(opacity: animation, child: child);
+              },
+            ),
+          );
+        }
+      } else {
+        print('🔄 No hay sesión guardada, redirigiendo a login');
+        
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            PageRouteBuilder(
+              pageBuilder: (context, animation, secondaryAnimation) =>
+                  const LoginPage(),
+              transitionDuration: const Duration(milliseconds: 600),
+              transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                return FadeTransition(opacity: animation, child: child);
+              },
+            ),
+          );
+        }
       }
     } catch (e) {
       // Error en la verificación, ir al login

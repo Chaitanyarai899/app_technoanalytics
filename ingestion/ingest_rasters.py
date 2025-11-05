@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 =============================================================================
-MODERN RASTER INGESTION PIPELINE
+RASTER INGESTION PIPELINE
 Proceso completo: TIF → COG → GCS → Supabase
 =============================================================================
 """
@@ -385,7 +385,7 @@ class RasterIngestionPipeline:
 
 def main():
     """Función principal"""
-    parser = argparse.ArgumentParser(description='Ingesta de rasters a arquitectura moderna')
+    parser = argparse.ArgumentParser(description='Ingesta de rasters')
     parser.add_argument('input', help='Archivo TIF o directorio a procesar')
     parser.add_argument('--force', action='store_true', help='Forzar reprocesamiento')
     parser.add_argument('--verbose', '-v', action='store_true', help='Logging detallado')

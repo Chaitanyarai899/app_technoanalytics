@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'explorar_view.dart';
 import 'dashboard.dart'; 
 
@@ -19,9 +19,19 @@ class _MainNavigationViewState extends State<MainNavigationView> {
   int _selectedIndex = 0;
 
   void _cerrarSesion() async {
-    await Supabase.instance.client.auth.signOut();
-    if (mounted) {
-      Navigator.of(context).pushReplacementNamed('/');
+    try {
+      // Limpiar SharedPreferences
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.clear();
+      
+      if (mounted) {
+        Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+      }
+    } catch (e) {
+      print('Error al cerrar sesión: $e');
+      if (mounted) {
+        Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+      }
     }
   }
 

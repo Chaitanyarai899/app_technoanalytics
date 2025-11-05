@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
 import '../services/supabase_service.dart';
@@ -42,20 +43,21 @@ class _DashboardViewState extends State<DashboardView> {
   }
 
   Future<void> cargarFiltrosEmpresaIngenio() async {
-    final email = Supabase.instance.client.auth.currentUser?.email;
-    if (email == null) return;
-    final userInfo = await supabaseService.getUserInfo(email);
-    if (userInfo == null) return;
-    final userCompany = userInfo['company'];
+    final prefs = await SharedPreferences.getInstance();
+    final isLoggedIn = prefs.getBool('is_logged_in') ?? false;
+    if (!isLoggedIn) return;
+    
+    final userCompany = prefs.getString('user_company') ?? '';
+    final userIngenio = prefs.getString('user_ingenio') ?? '';
+    
     if (userCompany == 'Todos') {
       empresasDisponibles = await supabaseService.getCompanies();
       empresasDisponibles.removeWhere((e) => e.trim().toLowerCase() == 'todos');
     } else {
       empresasDisponibles = [userCompany];
     }
-    selectedEmpresa = empresasDisponibles.first;
+    selectedEmpresa = empresasDisponibles.isNotEmpty ? empresasDisponibles.first : '';
 
-    final userIngenio = userInfo['ingenio'];
     if (userIngenio == 'Todos') {
       ingeniosDisponibles = await supabaseService.getIngeniosByCompany(selectedEmpresa);
       // Filtrar "Todos" de la lista de ingenios disponibles
@@ -68,27 +70,46 @@ class _DashboardViewState extends State<DashboardView> {
     if (ingeniosDisponibles.isNotEmpty) {
       selectedIngenio = ingeniosDisponibles.first;
     }
-    selectedCountry = userInfo['country'].toString().toLowerCase();
-    setState(() {});
-    cargarDatosParcelas();
+    selectedCountry = (prefs.getString('user_country') ?? '').toLowerCase();
+    
+    if (mounted) {
+      setState(() {});
+      cargarDatosParcelas();
+    }
   }
 
   Future<void> cargarDatosParcelas() async {
+    if (!mounted) return;
     setState(() => isLoading = true);
 
-    final response = await Supabase.instance.client
-        .from('parcelas_ingenios')
-        .select()
-        .eq('company', selectedEmpresa)
-        .eq('ingenio', selectedIngenio)
-        .eq('temporada_activa', true); // Solo parcelas de la temporada activa
+    try {
+      final response = await Supabase.instance.client
+          .from('parcelas_ingenios')
+          .select()
+          .eq('ingenio', selectedIngenio); // Sin filtro de company (por RLS)
 
-    print('Dashboard: Cargadas ${response.length} parcelas para $selectedEmpresa - $selectedIngenio');
+      print('Dashboard: Consultadas ${response.length} parcelas para $selectedIngenio');
+      
+      // Filtrar temporada_activa en el cliente
+      final parcelasActivas = response.where((p) => p['temporada_activa'] == true).toList();
+      
+      print('Dashboard: ${parcelasActivas.length} parcelas activas de ${response.length} totales');
 
-    setState(() {
-      parcelas = response;
-      isLoading = false;
-    });
+      if (mounted) {
+        setState(() {
+          parcelas = parcelasActivas;
+          isLoading = false;
+        });
+      }
+    } catch (e) {
+      print('ERROR Dashboard: $e');
+      if (mounted) {
+        setState(() {
+          parcelas = [];
+          isLoading = false;
+        });
+      }
+    }
   }
 
   @override
@@ -116,6 +137,7 @@ class _DashboardViewState extends State<DashboardView> {
               decoration: const InputDecoration(labelText: 'Empresa'),
               items: empresasDisponibles.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
               onChanged: (value) async {
+                if (!mounted) return;
                 setState(() {
                   selectedEmpresa = value!;
                 });
@@ -124,7 +146,7 @@ class _DashboardViewState extends State<DashboardView> {
                 final email = Supabase.instance.client.auth.currentUser?.email;
                 if (email != null) {
                   final userInfo = await supabaseService.getUserInfo(email);
-                  if (userInfo != null) {
+                  if (userInfo != null && mounted) {
                     final userIngenio = userInfo['ingenio'];
                     if (userIngenio == 'Todos') {
                       ingeniosDisponibles = await supabaseService.getIngeniosByCompany(selectedEmpresa);
@@ -138,7 +160,7 @@ class _DashboardViewState extends State<DashboardView> {
                     if (ingeniosDisponibles.isNotEmpty) {
                       selectedIngenio = ingeniosDisponibles.first;
                     }
-                    setState(() {});
+                    if (mounted) setState(() {});
                   }
                 }
                 
@@ -153,6 +175,7 @@ class _DashboardViewState extends State<DashboardView> {
               decoration: const InputDecoration(labelText: 'Ingenio'),
               items: ingeniosDisponibles.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
               onChanged: (value) {
+                if (!mounted) return;
                 setState(() {
                   selectedIngenio = value!;
                 });
@@ -178,7 +201,9 @@ class _DashboardViewState extends State<DashboardView> {
             child: ChoiceChip(
               label: Text(secciones[index]),
               selected: isSelected,
-              onSelected: (_) => setState(() => selectedSeccion = index),
+              onSelected: (_) {
+                if (mounted) setState(() => selectedSeccion = index);
+              },
               selectedColor: Colors.green[300],
             ),
           );
