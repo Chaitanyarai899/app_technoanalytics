@@ -642,17 +642,17 @@ if (selectedEmpresa.isNotEmpty &&
 
 ## 🔍 Quick Reference
 
-**Need to modify calculations?**
+**calculations**
 - Harvest metrics → `lib/views/dashboard.dart:244-288`
 - Weekly aggregation → `lib/views/dashboard.dart:357-404`
 - Top-N grouping → `lib/views/dashboard.dart:331-350`
 
-**Need to change map rendering?**
+**map rendering**
 - GeoJSON parsing → `lib/views/explorar_view.dart:1003-1087`
 - Polygon display → `lib/views/explorar_view.dart:1729-1734`
 - Parcel loading → `lib/views/explorar_view.dart:785-807`
 
-**Need to adjust tile generation?**
+**tile generation**
 - URL builder → `lib/services/modern_raster_service.dart:66-110`
 - Metadata fetching → `lib/services/modern_raster_service.dart:126-177`
 - Map integration → `lib/views/explorar_view.dart:1587-1659`
